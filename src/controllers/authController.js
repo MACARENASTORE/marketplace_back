@@ -32,8 +32,6 @@ exports.registerUser = async (req, res) => {
 
     await user.save();
 
-    const token = jwt.sign({ id: user._id }, JWT_SECRET, { expiresIn: '1h' });
-
     res.status(201).json({
       message: 'Usuario registrado con éxito',
       user: {
@@ -42,8 +40,8 @@ exports.registerUser = async (req, res) => {
         last_name: user.last_name,
         email: user.email,
         role: user.role
-      },
-      token
+      }
+      
     });
   } catch (error) {
     console.error(error);
