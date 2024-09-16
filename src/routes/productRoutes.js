@@ -1,51 +1,92 @@
 const express = require("express");
-const router = express.Router();
-const productController = require("../controllers/productController");
-const authMiddleware = require("../middleware/authMiddleware");
-
-// Importar Multer para manejar la subida de imágenes
+const { initializeApp } = require("firebase/app");
+const {
+  getStorage,
+  ref,
+  uploadBytesResumable,
+  getDownloadURL,
+} = require("firebase/storage");
 const multer = require("multer");
-const path = require("path");
+const config = require("../config/firebase.config");
+const productController = require("../controllers/productController");
 
-// Configuración de almacenamiento local con Multer
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    // Definir la carpeta donde se guardarán las imágenes
-    cb(null, './public/products');
-  },
-  filename: (req, file, cb) => {
-    // Definir el nombre del archivo para evitar conflictos (puedes usar un identificador único)
-    cb(null, Date.now() + path.extname(file.originalname)); // Fecha y extensión del archivo original
+const router = express.Router();
+
+// Inicializa la aplicación de Firebase
+initializeApp(config.firebaseConfig);
+
+// Inicializa Firebase Cloud Storage
+const storage = getStorage();
+
+// Configuración de Multer para almacenar archivos en memoria
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Middleware para manejar la subida de productos
+router.post("/", upload.single("image"), async (req, res) => {
+  try {
+    let downloadURL = null;
+
+    // Subir imagen a Firebase Storage si se proporciona un archivo
+    if (req.file) {
+      // Crear nombre de archivo único con fecha y hora
+      const dateTime = giveCurrentDateTime();
+      const fileName = req.file.originalname
+        ? `${Date.now()}_${req.file.originalname.replace(/\s+/g, "_")}`
+        : `${Date.now()}_default_filename.png`;
+      console.log(fileName);  
+      const storageRef = ref(storage, `products/${fileName}`);
+      const metadata = {
+        contentType: req.file.mimetype,
+      };
+
+      // Subir el archivo
+      const uploadTask = uploadBytesResumable(
+        storageRef,
+        req.file.buffer,
+        metadata
+      );
+
+      // Esperar a que la subida se complete y obtener la URL de descarga
+      await new Promise((resolve, reject) => {
+        uploadTask.on(
+          "state_changed",
+          () => {}, // Progreso, no necesitamos usarlo en este caso
+          (error) => reject(error),
+          async () => {
+            try {
+              downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          }
+        );
+      });
+    }
+
+    // Añadir la URL de la imagen al objeto req.file para que esté disponible en el controlador
+    req.file = { downloadURL };
+
+    // Llamar al controlador de productos para crear el producto
+    await productController.createProduct(req, res);
+  } catch (error) {
+    res
+      .status(400)
+      .send({
+        message: "Error en la carga del producto",
+        error: error.message,
+      });
   }
 });
 
-// Filtro para asegurarse de que el archivo subido es una imagen
-const fileFilter = (req, file, cb) => {
-  const fileTypes = /jpeg|jpg|png|gif/;
-  const extname = fileTypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = fileTypes.test(file.mimetype);
-  
-  if (mimetype && extname) {
-    return cb(null, true);
-  } else {
-    cb(new Error('Solo se permiten imágenes'));
-  }
+// Función para obtener la fecha y hora actual
+const giveCurrentDateTime = () => {
+  const today = new Date();
+  const date =
+    today.getFullYear() + "-" + (today.getMonth() + 1) + "-" + today.getDate();
+  const time =
+    today.getHours() + ":" + today.getMinutes() + ":" + today.getSeconds();
+  return `${date}_${time}`;
 };
-
-// Configuración de Multer con límite de tamaño y filtro de tipo de archivo
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 1024 * 1024 * 5 }, // Limitar a 5MB
-  fileFilter: fileFilter
-});
-
-// Definir las rutas para productos
-router.get("/", productController.getAllProducts);
-router.get("/:id", productController.getProductById);
-
-// Solo los usuarios autenticados pueden crear, actualizar o eliminar productos
-router.post("/", authMiddleware, upload.single("image"), productController.createProduct);
-router.put("/:id", authMiddleware, upload.single("image"), productController.updateProduct);
-router.delete("/:id", authMiddleware, productController.deleteProduct);
 
 module.exports = router;

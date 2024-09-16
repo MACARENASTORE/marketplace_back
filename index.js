@@ -9,6 +9,9 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const uploadRouter = require('./src/controllers/upload-file.controller'); 
+app.use('/upload', uploadRouter);
+
 // Rutas
 app.use('/api', routes);
 

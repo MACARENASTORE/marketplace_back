@@ -1,112 +1,67 @@
-// Importar el modelo de Product (Producto)
-const Product = require("../models/ProductModel");
+const Product = require('../models/ProductModel');
+const { getStorage, ref, uploadBytesResumable, getDownloadURL } = require('firebase/storage');
+const multer = require("multer");
+const { initializeApp } = require('firebase/app');
+const config = require('../config/firebase.config');
 
-// Función para obtener todos los productos
-exports.getAllProducts = async (req, res) => {
-  try {
-    // Obtener todos los productos de la base de datos y poblar la categoría asociada
-    const products = await Product.find().populate("category");
+// Initialize Firebase
+initializeApp(config.firebaseConfig);
+const storage = getStorage();
 
-    // Responder con un estado 200 (Éxito) y los productos obtenidos
-    res.status(200).json(products);
-  } catch (error) {
-    // Manejar errores al obtener los productos y responder con un estado 500
-    res.status(500).json({ message: "Error al obtener los productos", error });
-  }
-};
-
-// Función para obtener un producto por su ID
-exports.getProductById = async (req, res) => {
-  try {
-    // Buscar el producto por su ID y poblar la categoría asociada
-    const product = await Product.findById(req.params.id).populate("category");
-
-    // Si no se encuentra el producto, responder con un estado 404 (No encontrado)
-    if (!product) {
-      return res.status(404).json({ message: "Producto no encontrado" });
-    }
-
-    // Responder con un estado 200 (Éxito) y el producto encontrado
-    res.status(200).json(product);
-  } catch (error) {
-    // Manejar errores al obtener el producto y responder con un estado 500
-    res.status(500).json({ message: "Error al obtener el producto", error });
-  }
-};
-
-// Función para crear un nuevo producto
 exports.createProduct = async (req, res) => {
-  try {
-    // Extraer los datos del cuerpo de la solicitud
-    const { name, description, price, category, stock } = req.body;
+    try {
+        // Extract product data
+        const { name, description, price, category, stock } = req.body;
 
-    // Inicializar la variable de la URL de la imagen
-    let imageUrl = null;
+        // Check if the file is present in the request
+        let imageUrl = null;
+        if (req.file) {
+            console.log(req.file);
+            const fileName = `${Date.now()}_${req.file.originalname}`; // Ensure originalname is not undefined
+            const fileRef = ref(storage, `products/${fileName}`);
 
-    // Verificar si el archivo fue cargado correctamente
-    if (req.file) {
-      // Guardar la ruta local de la imagen
-      imageUrl = req.file.path; 
+            // Upload file
+            const uploadTask = uploadBytesResumable(fileRef, req.file.buffer, {
+                contentType: req.file.mimetype
+            });
+
+            // Get download URL once the upload is complete
+            await new Promise((resolve, reject) => {
+                uploadTask.on('state_changed',
+                    () => {}, // You can handle progress here if necessary
+                    (error) => {
+                        reject(error);
+                    },
+                    async () => {
+                        try {
+                            // Retrieve the download URL after the file is uploaded
+                            imageUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                            resolve();
+                        } catch (error) {
+                            reject(error);
+                        }
+                    }
+                );
+            });
+        }
+
+        // Create a new Product instance
+        const product = new Product({
+            name,
+            description,
+            price,
+            category,
+            stock,
+            image: imageUrl, // Save the download URL to the database
+        });
+
+        // Save the product to the database
+        await product.save();
+
+        // Respond with the created product
+        res.status(201).json(product);
+    } catch (error) {
+        console.log("Error creating product:", error);
+        res.status(500).json({ message: "Error creating product", error });
     }
-
-    // Crear un nuevo producto con los datos recibidos
-    const product = new Product({
-      name,
-      description,
-      price,
-      category,
-      stock,
-      image: imageUrl // Asignar la ruta de la imagen subida
-    });
-
-    // Guardar el producto en la base de datos
-    await product.save();
-
-    // Responder con el producto creado y un estado 201 (Creado)
-    res.status(201).json({
-      message: "Producto creado con éxito",
-      product
-    });
-
-  } catch (error) {
-    // Manejar errores y responder con un estado 500
-    console.error("Error al crear el producto:", error);
-    res.status(500).json({
-      message: "Error al crear el producto",
-      error
-    });
-  }}
-// Función para actualizar un producto por su ID
-exports.updateProduct = async (req, res) => {
-  try {
-    // Actualizar el producto basado en el ID proporcionado y los datos en el cuerpo de la solicitud
-    const product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-    });
-
-    // Si no se encuentra el producto, responder con un estado 404 (No encontrado)
-    if (!product) {
-      return res.status(404).json({ message: "Producto no encontrado" });
-    }
-
-    // Responder con un estado 200 (Éxito) y el producto actualizado
-    res.status(200).json(product);
-  } catch (error) {
-    // Manejar errores al actualizar el producto y responder con un estado 500
-    res.status(500).json({ message: "Error al actualizar el producto", error });
-  }
-};
-
-// Función para eliminar un producto por su ID
-exports.deleteProduct = async (req, res) => {
-  try {
-    // Buscar y eliminar el producto por su ID
-    await Product.findByIdAndDelete(req.params.id);
-
-    // Responder con un estado 200 (Éxito) y un mensaje de eliminación exitosa
-    res.status(200).json({ message: "Producto eliminado con éxito" });
-  } catch (error) {
-    // Manejar errores al eliminar el producto y responder con un estado 500
-    res.status(500).json({ message: "Error al eliminar el producto", error });
-  }
 };
